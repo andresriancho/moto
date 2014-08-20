@@ -1,9 +1,10 @@
 from jinja2 import Template
 
+from moto.core.responses import BaseResponse
 from moto.ec2.models import ec2_backend
 
 
-class SpotInstances(object):
+class SpotInstances(BaseResponse):
     def _get_param(self, param_name):
         return self.querystring.get(param_name, [None])[0]
 
@@ -11,9 +12,6 @@ class SpotInstances(object):
         value = self._get_param(param_name)
         if value is not None:
             return int(value)
-
-    def _get_multi_param(self, param_prefix):
-        return [value[0] for key, value in self.querystring.items() if key.startswith(param_prefix)]
 
     def cancel_spot_instance_requests(self):
         request_ids = self._get_multi_param('SpotInstanceRequestId')
@@ -48,7 +46,7 @@ class SpotInstances(object):
         launch_group = self._get_param('LaunchGroup')
         availability_zone_group = self._get_param('AvailabilityZoneGroup')
         key_name = self._get_param('LaunchSpecification.KeyName')
-        security_groups = self._get_multi_param('LaunchSpecification.SecurityGroup.')
+        security_groups = self._get_multi_param('LaunchSpecification.SecurityGroup')
         user_data = self._get_param('LaunchSpecification.UserData')
         instance_type = self._get_param('LaunchSpecification.InstanceType')
         placement = self._get_param('LaunchSpecification.Placement.AvailabilityZone')
@@ -86,7 +84,7 @@ REQUEST_SPOT_INSTANCES_TEMPLATE = """<RequestSpotInstancesResponse xmlns="http:/
   <spotInstanceRequestSet>
     {% for request in requests %}
     <item>
-      <spotInstanceRequestId>{{ request.price }}</spotInstanceRequestId>
+      <spotInstanceRequestId>{{ request.id }}</spotInstanceRequestId>
       <spotPrice>{{ request.price }}</spotPrice>
       <type>{{ request.type }}</type>
       <state>{{ request.state }}</state>
@@ -97,27 +95,27 @@ REQUEST_SPOT_INSTANCES_TEMPLATE = """<RequestSpotInstancesResponse xmlns="http:/
       </status>
       <availabilityZoneGroup>{{ request.availability_zone_group }}</availabilityZoneGroup>
       <launchSpecification>
-        <imageId>{{ request.image_id }}</imageId>
-        <keyName>{{ request.key_name }}</keyName>
+        <imageId>{{ request.launch_specification.image_id }}</imageId>
+        <keyName>{{ request.launch_specification.key_name }}</keyName>
         <groupSet>
-          {% for group in request.security_groups %}
+          {% for group in request.launch_specification.groups %}
           <item>
             <groupId>{{ group.id }}</groupId>
             <groupName>{{ group.name }}</groupName>
           </item>
           {% endfor %}
         </groupSet>
-        <kernelId>{{ request.kernel_id }}</kernelId>
-        <ramdiskId>{{ request.ramdisk_id }}</ramdiskId>
-        <subnetId>{{ request.subnet_id }}</subnetId>
-        <instanceType>{{ request.instance_type }}</instanceType>
+        <kernelId>{{ request.launch_specification.kernel }}</kernelId>
+        <ramdiskId>{{ request.launch_specification.ramdisk }}</ramdiskId>
+        <subnetId>{{ request.launch_specification.subnet_id }}</subnetId>
+        <instanceType>{{ request.launch_specification.instance_type }}</instanceType>
         <blockDeviceMapping/>
         <monitoring>
-          <enabled>{{ request.monitoring_enabled }}</enabled>
+          <enabled>{{ request.launch_specification.monitored }}</enabled>
         </monitoring>
-        <ebsOptimized>{{ request.ebs_optimized }}</ebsOptimized>
+        <ebsOptimized>{{ request.launch_specification.ebs_optimized }}</ebsOptimized>
         <PlacementRequestType>
-          <availabilityZone>{{ request.placement }}</availabilityZone>
+          <availabilityZone>{{ request.launch_specification.placement }}</availabilityZone>
           <groupName></groupName>
         </PlacementRequestType>
       </launchSpecification>
@@ -153,36 +151,36 @@ DESCRIBE_SPOT_INSTANCES_TEMPLATE = """<DescribeSpotInstanceRequestsResponse xmln
         <availabilityZoneGroup>{{ request.availability_zone_group }}</availabilityZoneGroup>
       {% endif %}
       <launchSpecification>
-        <imageId>{{ request.image_id }}</imageId>
-        {% if request.key_name %}
-          <keyName>{{ request.key_name }}</keyName>
+        <imageId>{{ request.launch_specification.image_id }}</imageId>
+        {% if request.launch_specification.key_name %}
+          <keyName>{{ request.launch_specification.key_name }}</keyName>
         {% endif %}
         <groupSet>
-          {% for group in request.security_groups %}
+          {% for group in request.launch_specification.groups %}
           <item>
             <groupId>{{ group.id }}</groupId>
             <groupName>{{ group.name }}</groupName>
           </item>
           {% endfor %}
         </groupSet>
-        {% if request.kernel_id %}
-        <kernelId>{{ request.kernel_id }}</kernelId>
+        {% if request.launch_specification.kernel %}
+        <kernelId>{{ request.launch_specification.kernel }}</kernelId>
         {% endif %}
-        {% if request.ramdisk_id %}
-        <ramdiskId>{{ request.ramdisk_id }}</ramdiskId>
+        {% if request.launch_specification.ramdisk %}
+        <ramdiskId>{{ request.launch_specification.ramdisk }}</ramdiskId>
         {% endif %}
-        {% if request.subnet_id %}
-        <subnetId>{{ request.subnet_id }}</subnetId>
+        {% if request.launch_specification.subnet_id %}
+        <subnetId>{{ request.launch_specification.subnet_id }}</subnetId>
         {% endif %}
-        <instanceType>{{ request.instance_type }}</instanceType>
+        <instanceType>{{ request.launch_specification.instance_type }}</instanceType>
         <blockDeviceMapping/>
         <monitoring>
-          <enabled>{{ request.monitoring_enabled }}</enabled>
+          <enabled>{{ request.launch_specification.monitored }}</enabled>
         </monitoring>
-        <ebsOptimized>{{ request.ebs_optimized }}</ebsOptimized>
-        {% if request.placement %}
+        <ebsOptimized>{{ request.launch_specification.ebs_optimized }}</ebsOptimized>
+        {% if request.launch_specification.placement %}
           <PlacementRequestType>
-            <availabilityZone>{{ request.placement }}</availabilityZone>
+            <availabilityZone>{{ request.launch_specification.placement }}</availabilityZone>
             <groupName></groupName>
           </PlacementRequestType>
         {% endif %}

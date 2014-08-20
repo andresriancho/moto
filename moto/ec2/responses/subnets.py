@@ -1,9 +1,10 @@
 from jinja2 import Template
 
+from moto.core.responses import BaseResponse
 from moto.ec2.models import ec2_backend
 
 
-class Subnets(object):
+class Subnets(BaseResponse):
     def create_subnet(self):
         vpc_id = self.querystring.get('VpcId')[0]
         cidr_block = self.querystring.get('CidrBlock')[0]
@@ -32,11 +33,20 @@ CREATE_SUBNET_RESPONSE = """
   <subnet>
     <subnetId>{{ subnet.id }}</subnetId>
     <state>pending</state>
-    <vpcId>{{ subnet.vpc.id }}</vpcId>
+    <vpcId>{{ subnet.vpc_id }}</vpcId>
     <cidrBlock>{{ subnet.cidr_block }}</cidrBlock>
     <availableIpAddressCount>251</availableIpAddressCount>
     <availabilityZone>us-east-1a</availabilityZone>
-    <tagSet/>
+    <tagSet>
+      {% for tag in subnet.get_tags() %}
+        <item>
+          <resourceId>{{ tag.resource_id }}</resourceId>
+          <resourceType>{{ tag.resource_type }}</resourceType>
+          <key>{{ tag.key }}</key>
+          <value>{{ tag.value }}</value>
+        </item>
+      {% endfor %}
+    </tagSet>
   </subnet>
 </CreateSubnetResponse>"""
 
@@ -54,11 +64,20 @@ DESCRIBE_SUBNETS_RESPONSE = """
       <item>
         <subnetId>{{ subnet.id }}</subnetId>
         <state>available</state>
-        <vpcId>{{ subnet.vpc.id }}</vpcId>
+        <vpcId>{{ subnet.vpc_id }}</vpcId>
         <cidrBlock>{{ subnet.cidr_block }}</cidrBlock>
         <availableIpAddressCount>251</availableIpAddressCount>
         <availabilityZone>us-east-1a</availabilityZone>
-        <tagSet/>
+        <tagSet>
+          {% for tag in subnet.get_tags() %}
+            <item>
+              <resourceId>{{ tag.resource_id }}</resourceId>
+              <resourceType>{{ tag.resource_type }}</resourceType>
+              <key>{{ tag.key }}</key>
+              <value>{{ tag.value }}</value>
+            </item>
+          {% endfor %}
+        </tagSet>
       </item>
     {% endfor %}
   </subnetSet>

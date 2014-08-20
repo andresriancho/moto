@@ -4,9 +4,12 @@ from setuptools import setup, find_packages
 
 install_requires = [
     "boto",
+    "dicttoxml",
     "flask",
     "httpretty>=0.6.1",
     "Jinja2",
+    "xmltodict",
+    "requests",
 ]
 
 import sys
@@ -17,7 +20,7 @@ if sys.version_info < (2, 7):
 
 setup(
     name='moto',
-    version='0.2.11',
+    version='0.3.3',
     description='A library that allows your python tests to easily'
                 ' mock out the boto library',
     author='Steve Pulec',

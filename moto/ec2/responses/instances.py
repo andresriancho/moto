@@ -1,12 +1,13 @@
 from jinja2 import Template
 
+from moto.core.responses import BaseResponse
 from moto.core.utils import camelcase_to_underscores
 from moto.ec2.models import ec2_backend
 from moto.ec2.utils import instance_ids_from_querystring, filters_from_querystring, filter_reservations
 from moto.ec2.exceptions import InvalidIdError
 
 
-class InstanceResponse(object):
+class InstanceResponse(BaseResponse):
     def describe_instances(self):
         instance_ids = instance_ids_from_querystring(self.querystring)
         if instance_ids:
@@ -14,7 +15,7 @@ class InstanceResponse(object):
                 reservations = ec2_backend.get_reservations_by_instance_ids(instance_ids)
             except InvalidIdError as exc:
                 template = Template(EC2_INVALID_INSTANCE_ID)
-                return template.render(instance_id=exc.instance_id), dict(status=400)
+                return template.render(instance_id=exc.id), dict(status=400)
         else:
             reservations = ec2_backend.all_reservations(make_copy=True)
 
@@ -28,7 +29,15 @@ class InstanceResponse(object):
         min_count = int(self.querystring.get('MinCount', ['1'])[0])
         image_id = self.querystring.get('ImageId')[0]
         user_data = self.querystring.get('UserData')
-        new_reservation = ec2_backend.add_instances(image_id, min_count, user_data)
+        security_group_names = self._get_multi_param('SecurityGroup')
+        security_group_ids = self._get_multi_param('SecurityGroupId')
+        instance_type = self.querystring.get("InstanceType", ["m1.small"])[0]
+        subnet_id = self.querystring.get("SubnetId", [None])[0]
+        key_name = self.querystring.get("KeyName", [None])[0]
+        new_reservation = ec2_backend.add_instances(
+            image_id, min_count, user_data, security_group_names,
+            instance_type=instance_type, subnet_id=subnet_id,
+            key_name=key_name, security_group_ids=security_group_ids)
         template = Template(EC2_RUN_INSTANCES)
         return template.render(reservation=new_reservation)
 
@@ -67,12 +76,16 @@ class InstanceResponse(object):
         return template.render(instance=instance, attribute=attribute, value=value)
 
     def modify_instance_attribute(self):
+        attribute_key = None
         for key, value in self.querystring.iteritems():
             if '.Value' in key:
+                attribute_key = key
                 break
 
-        value = self.querystring.get(key)[0]
-        normalized_attribute = camelcase_to_underscores(key.split(".")[0])
+        if not attribute_key:
+            return
+        value = self.querystring.get(attribute_key)[0]
+        normalized_attribute = camelcase_to_underscores(attribute_key.split(".")[0])
         instance_ids = instance_ids_from_querystring(self.querystring)
         instance_id = instance_ids[0]
         ec2_backend.modify_instance_attribute(instance_id, normalized_attribute, value)
@@ -101,8 +114,9 @@ EC2_RUN_INSTANCES = """<RunInstancesResponse xmlns="http://ec2.amazonaws.com/doc
           <privateDnsName/>
           <dnsName/>
           <reason/>
+          <keyName>{{ instance.key_name }}</keyName>
           <amiLaunchIndex>0</amiLaunchIndex>
-          <instanceType>m1.small</instanceType>
+          <instanceType>{{ instance.instance_type }}</instanceType>
           <launchTime>2007-08-07T11:51:50.000Z</launchTime>
           <placement>
             <availabilityZone>us-east-1b</availabilityZone>
@@ -112,12 +126,15 @@ EC2_RUN_INSTANCES = """<RunInstancesResponse xmlns="http://ec2.amazonaws.com/doc
           <monitoring>
             <state>enabled</state>
           </monitoring>
+          <subnetId>{{ instance.subnet_id }}</subnetId>
           <sourceDestCheck>true</sourceDestCheck>
           <groupSet>
+             {% for group in instance.security_groups %}
              <item>
-                <groupId>sg-245f6a01</groupId>
-                <groupName>default</groupName>
+                <groupId>{{ group.id }}</groupId>
+                <groupName>{{ group.name }}</groupName>
              </item>
+             {% endfor %}
           </groupSet>
           <virtualizationType>paravirtual</virtualizationType>
           <clientToken/>
@@ -135,12 +152,7 @@ EC2_DESCRIBE_INSTANCES = """<DescribeInstancesResponse xmlns='http://ec2.amazona
           <item>
             <reservationId>{{ reservation.id }}</reservationId>
             <ownerId>111122223333</ownerId>
-            <groupSet>
-              <item>
-                <groupId>sg-1a2b3c4d</groupId>
-                <groupName>my-security-group</groupName>
-              </item>
-            </groupSet>
+            <groupSet></groupSet>
             <instancesSet>
                 {% for instance in reservation.instances %}
                   <item>
@@ -153,10 +165,10 @@ EC2_DESCRIBE_INSTANCES = """<DescribeInstancesResponse xmlns='http://ec2.amazona
                     <privateDnsName>ip-10.0.0.12.ec2.internal</privateDnsName>
                     <dnsName>ec2-46.51.219.63.compute-1.amazonaws.com</dnsName>
                     <reason/>
-                    <keyName>gsg-keypair</keyName>
+                    <keyName>{{ instance.key_name }}</keyName>
                     <amiLaunchIndex>0</amiLaunchIndex>
                     <productCodes/>
-                    <instanceType>c1.medium</instanceType>
+                    <instanceType>{{ instance.instance_type }}</instanceType>
                     <launchTime>YYYY-MM-DDTHH:MM:SS+0000</launchTime>
                     <placement>
                       <availabilityZone>us-west-2a</availabilityZone>
@@ -167,16 +179,18 @@ EC2_DESCRIBE_INSTANCES = """<DescribeInstancesResponse xmlns='http://ec2.amazona
                     <monitoring>
                       <state>disabled</state>
                     </monitoring>
-                    <subnetId>subnet-1a2b3c4d</subnetId>
+                    <subnetId>{{ instance.subnet_id }}</subnetId>
                     <vpcId>vpc-1a2b3c4d</vpcId>
                     <privateIpAddress>10.0.0.12</privateIpAddress>
                     <ipAddress>46.51.219.63</ipAddress>
                     <sourceDestCheck>true</sourceDestCheck>
                     <groupSet>
+                      {% for group in instance.security_groups %}
                       <item>
-                        <groupId>sg-1a2b3c4d</groupId>
-                        <groupName>my-security-group</groupName>
+                        <groupId>{{ group.id }}</groupId>
+                        <groupName>{{ group.name }}</groupName>
                       </item>
+                      {% endfor %}
                     </groupSet>
                     <architecture>x86_64</architecture>
                     <rootDeviceType>ebs</rootDeviceType>

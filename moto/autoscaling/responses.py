@@ -1,21 +1,30 @@
 from jinja2 import Template
 
 from moto.core.responses import BaseResponse
+from moto.core.utils import camelcase_to_underscores
 from .models import autoscaling_backend
 
 
 class AutoScalingResponse(BaseResponse):
-
-    def _get_param(self, param_name):
-        return self.querystring.get(param_name, [None])[0]
-
     def _get_int_param(self, param_name):
         value = self._get_param(param_name)
         if value is not None:
             return int(value)
 
-    def _get_multi_param(self, param_prefix):
-        return [value[0] for key, value in self.querystring.items() if key.startswith(param_prefix)]
+    def _get_list_prefix(self, param_prefix):
+        results = []
+        param_index = 1
+        while True:
+            index_prefix = "{0}.{1}.".format(param_prefix, param_index)
+            new_items = {}
+            for key, value in self.querystring.items():
+                if key.startswith(index_prefix):
+                    new_items[camelcase_to_underscores(key.replace(index_prefix, ""))] = value[0]
+            if not new_items:
+                break
+            results.append(new_items)
+            param_index += 1
+        return results
 
     def create_launch_configuration(self):
         instance_monitoring_string = self._get_param('InstanceMonitoring.Enabled')
@@ -27,13 +36,15 @@ class AutoScalingResponse(BaseResponse):
             name=self._get_param('LaunchConfigurationName'),
             image_id=self._get_param('ImageId'),
             key_name=self._get_param('KeyName'),
-            security_groups=self._get_multi_param('SecurityGroups.member.'),
+            security_groups=self._get_multi_param('SecurityGroups.member'),
             user_data=self._get_param('UserData'),
             instance_type=self._get_param('InstanceType'),
             instance_monitoring=instance_monitoring,
             instance_profile_name=self._get_param('IamInstanceProfile'),
             spot_price=self._get_param('SpotPrice'),
             ebs_optimized=self._get_param('EbsOptimized'),
+            associate_public_ip_address=self._get_param("AssociatePublicIpAddress"),
+            block_device_mappings=self._get_list_prefix('BlockDeviceMappings.member')
         )
         template = Template(CREATE_LAUNCH_CONFIGURATION_TEMPLATE)
         return template.render()
@@ -152,6 +163,7 @@ DESCRIBE_LAUNCH_CONFIGURATIONS_TEMPLATE = """<DescribeLaunchConfigurationsRespon
     <LaunchConfigurations>
       {% for launch_configuration in launch_configurations %}
         <member>
+          <AssociatePublicIpAddress>{{ launch_configuration.associate_public_ip_address }}</AssociatePublicIpAddress>
           <SecurityGroups>
             {% for security_group in launch_configuration.security_groups %}
               <member>{{ security_group }}</member>
@@ -171,7 +183,34 @@ DESCRIBE_LAUNCH_CONFIGURATIONS_TEMPLATE = """<DescribeLaunchConfigurationsRespon
           <InstanceType>m1.small</InstanceType>
           <LaunchConfigurationARN>arn:aws:autoscaling:us-east-1:803981987763:launchConfiguration:
           9dbbbf87-6141-428a-a409-0752edbe6cad:launchConfigurationName/my-test-lc</LaunchConfigurationARN>
-          <BlockDeviceMappings/>
+          {% if launch_configuration.block_device_mappings %}
+            <BlockDeviceMappings>
+            {% for mount_point, mapping in launch_configuration.block_device_mappings.iteritems() %}
+              <member>
+                <DeviceName>{{ mount_point }}</DeviceName>
+                {% if mapping.ephemeral_name %}
+                <VirtualName>{{ mapping.ephemeral_name }}</VirtualName>
+                {% else %}
+                <Ebs>
+                {% if mapping.snapshot_id %}
+                  <SnapshotId>{{ mapping.snapshot_id }}</SnapshotId>
+                {% endif %}
+                {% if mapping.size %}
+                  <VolumeSize>{{ mapping.size }}</VolumeSize>
+                {% endif %}
+                {% if mapping.iops %}
+                  <Iops>{{ mapping.iops }}</Iops>
+                {% endif %}
+                  <DeleteOnTermination>{{ mapping.delete_on_termination }}</DeleteOnTermination>
+                  <VolumeType>{{ mapping.volume_type }}</VolumeType>
+                </Ebs>
+                {% endif %}
+              </member>
+            {% endfor %}
+            </BlockDeviceMappings>
+          {% else %}
+            <BlockDeviceMappings/>
+          {% endif %}
           <ImageId>{{ launch_configuration.image_id }}</ImageId>
           {% if launch_configuration.key_name %}
             <KeyName>{{ launch_configuration.key_name }}</KeyName>
@@ -219,7 +258,17 @@ DESCRIBE_AUTOSCALING_GROUPS_TEMPLATE = """<DescribeAutoScalingGroupsResponse xml
         <CreatedTime>2013-05-06T17:47:15.107Z</CreatedTime>
         <EnabledMetrics/>
         <LaunchConfigurationName>{{ group.launch_config_name }}</LaunchConfigurationName>
-        <Instances/>
+        <Instances>
+          {% for instance in group.instances %}
+          <member>
+            <HealthStatus>HEALTHY</HealthStatus>
+            <AvailabilityZone>us-east-1e</AvailabilityZone>
+            <InstanceId>{{ instance.id }}</InstanceId>
+            <LaunchConfigurationName>{{ instance.autoscaling_group.launch_config_name }}</LaunchConfigurationName>
+            <LifecycleState>InService</LifecycleState>
+          </member>
+          {% endfor %}
+        </Instances>
         <DesiredCapacity>{{ group.desired_capacity }}</DesiredCapacity>
         <AvailabilityZones>
           {% for availability_zone in group.availability_zones %}

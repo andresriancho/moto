@@ -3,10 +3,10 @@ import datetime
 import json
 
 try:
-        from collections import OrderedDict
+    from collections import OrderedDict
 except ImportError:
-        # python 2.6 or earlier, use backport
-        from ordereddict import OrderedDict
+    # python 2.6 or earlier, use backport
+    from ordereddict import OrderedDict
 
 
 from moto.core import BaseBackend
@@ -182,7 +182,11 @@ class Table(object):
         results = []
         last_page = True  # Once pagination is implemented, change this
 
-        possible_results = list(self.all_items())
+        if self.range_key_attr:
+            possible_results = self.items[hash_key].values()
+        else:
+            possible_results = list(self.all_items())
+
         if range_comparison:
             for result in possible_results:
                 if result.range_key.compare(range_comparison, range_objs):

@@ -1,10 +1,12 @@
 from jinja2 import Template
 
+from moto.core.responses import BaseResponse
 from moto.ec2.models import ec2_backend
+from moto.ec2.exceptions import InvalidIdError
 from moto.ec2.utils import instance_ids_from_querystring, image_ids_from_querystring
 
 
-class AmisResponse(object):
+class AmisResponse(BaseResponse):
     def create_image(self):
         name = self.querystring.get('Name')[0]
         if "Description" in self.querystring:
@@ -34,9 +36,14 @@ class AmisResponse(object):
 
     def describe_images(self):
         ami_ids = image_ids_from_querystring(self.querystring)
-        images = ec2_backend.describe_images(ami_ids=ami_ids)
-        template = Template(DESCRIBE_IMAGES_RESPONSE)
-        return template.render(images=images)
+        try:
+            images = ec2_backend.describe_images(ami_ids=ami_ids)
+        except InvalidIdError as exc:
+            template = Template(DESCRIBE_IMAGES_INVALID_IMAGE_ID_RESPONSE)
+            return template.render(image_id=exc.id), dict(status=400)
+        else:
+            template = Template(DESCRIBE_IMAGES_RESPONSE)
+            return template.render(images=images)
 
     def modify_image_attribute(self):
         raise NotImplementedError('AMIs.modify_image_attribute is not yet implemented')
@@ -85,7 +92,16 @@ DESCRIBE_IMAGES_RESPONSE = """<DescribeImagesResponse xmlns="http://ec2.amazonaw
             </item>
           </blockDeviceMapping>
           <virtualizationType>{{ image.virtualization_type }}</virtualizationType>
-          <tagSet/>
+          <tagSet>
+            {% for tag in image.get_tags() %}
+              <item>
+                <resourceId>{{ tag.resource_id }}</resourceId>
+                <resourceType>{{ tag.resource_type }}</resourceType>
+                <key>{{ tag.key }}</key>
+                <value>{{ tag.value }}</value>
+              </item>
+            {% endfor %}
+          </tagSet>
           <hypervisor>xen</hypervisor>
         </item>
     {% endfor %}
@@ -99,6 +115,11 @@ DESCRIBE_IMAGE_RESPONSE = """<DescribeImageAttributeResponse xmlns="http://ec2.a
      <value>{{ value }}</value>
    </{{key }}>
 </DescribeImageAttributeResponse>"""
+
+
+DESCRIBE_IMAGES_INVALID_IMAGE_ID_RESPONSE = """<?xml version="1.0" encoding="UTF-8"?>
+<Response><Errors><Error><Code>InvalidAMIID.NotFound</Code><Message>The image id '[{{ image_id }}]' does not exist</Message></Error></Errors><RequestID>59dbff89-35bd-4eac-99ed-be587EXAMPLE</RequestID></Response>
+"""
 
 DEREGISTER_IMAGE_RESPONSE = """<DeregisterImageResponse xmlns="http://ec2.amazonaws.com/doc/2012-12-01/">
   <requestId>59dbff89-35bd-4eac-99ed-be587EXAMPLE</requestId>

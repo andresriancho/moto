@@ -45,7 +45,12 @@ def rrset_response(request, full_url, headers):
 
     if method == "POST":
         elements = xmltodict.parse(request.body)
-        for key, value in elements['ChangeResourceRecordSetsRequest']['ChangeBatch']['Changes'].items():
+
+        change_list = elements['ChangeResourceRecordSetsRequest']['ChangeBatch']['Changes']['Change']
+        if not isinstance(change_list, list):
+            change_list = [elements['ChangeResourceRecordSetsRequest']['ChangeBatch']['Changes']['Change']]
+
+        for value in change_list:
             action = value['Action']
             rrset = value['ResourceRecordSet']
 
@@ -61,8 +66,11 @@ def rrset_response(request, full_url, headers):
         template = Template(LIST_RRSET_REPONSE)
         rrset_list = []
         for key, value in the_zone.rrsets.items():
-            if 'type' not in querystring or querystring["type"][0] == value["Type"]:
-                rrset_list.append(dicttoxml.dicttoxml({"ResourceRecordSet": value}, root=False))
+            if 'type' in querystring and querystring["type"][0] != value["Type"]:
+                continue
+            if 'name' in querystring and querystring["name"][0] != value["Name"]:
+                continue
+            rrset_list.append(dicttoxml.dicttoxml({"ResourceRecordSet": value}, root=False))
 
         return 200, headers, template.render(rrsets=rrset_list)
 

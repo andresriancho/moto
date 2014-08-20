@@ -1,10 +1,19 @@
 from jinja2 import Template
 
+from moto.core.responses import BaseResponse
 from moto.ec2.models import ec2_backend
 
 
 def process_rules_from_querystring(querystring):
-    name = querystring.get('GroupName')[0]
+
+    name = None
+    group_id = None
+
+    try:
+        name = querystring.get('GroupName')[0]
+    except:
+        group_id = querystring.get('GroupId')[0]
+
     ip_protocol = querystring.get('IpPermissions.1.IpProtocol')[0]
     from_port = querystring.get('IpPermissions.1.FromPort')[0]
     to_port = querystring.get('IpPermissions.1.ToPort')[0]
@@ -14,13 +23,18 @@ def process_rules_from_querystring(querystring):
             ip_ranges.append(value[0])
 
     source_groups = []
+    source_group_ids = []
+
     for key, value in querystring.iteritems():
-        if 'IpPermissions.1.Groups' in key:
+        if 'IpPermissions.1.Groups.1.GroupId' in key:
+            source_group_ids.append(value[0])
+        elif 'IpPermissions.1.Groups' in key:
             source_groups.append(value[0])
-    return (name, ip_protocol, from_port, to_port, ip_ranges, source_groups)
+
+    return (name, group_id, ip_protocol, from_port, to_port, ip_ranges, source_groups, source_group_ids)
 
 
-class SecurityGroups(object):
+class SecurityGroups(BaseResponse):
     def authorize_security_group_egress(self):
         raise NotImplementedError('SecurityGroups.authorize_security_group_egress is not yet implemented')
 
@@ -30,7 +44,11 @@ class SecurityGroups(object):
 
     def create_security_group(self):
         name = self.querystring.get('GroupName')[0]
-        description = self.querystring.get('GroupDescription')[0]
+        try:
+            description = self.querystring.get('GroupDescription')[0]
+        except TypeError:
+            # No description found, return error
+            return "The request must contain the parameter GroupDescription", dict(status=400)
         vpc_id = self.querystring.get("VpcId", [None])[0]
         group = ec2_backend.create_security_group(name, description, vpc_id=vpc_id)
         if not group:
@@ -91,7 +109,9 @@ DESCRIBE_SECURITY_GROUPS_RESPONSE = """<DescribeSecurityGroupsResponse xmlns="ht
              <groupId>{{ group.id }}</groupId>
              <groupName>{{ group.name }}</groupName>
              <groupDescription>{{ group.description }}</groupDescription>
-             <vpcId>{{ group.vpc_id or ""}}</vpcId>
+             {% if group.vpc_id %}
+             <vpcId>{{ group.vpc_id }}</vpcId>
+             {% endif %}
              <ipPermissions>
                {% for rule in group.ingress_rules %}
                     <item>

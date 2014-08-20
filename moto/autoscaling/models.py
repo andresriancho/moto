@@ -1,3 +1,4 @@
+from boto.ec2.blockdevicemapping import BlockDeviceType, BlockDeviceMapping
 from moto.core import BaseBackend
 from moto.ec2 import ec2_backend
 
@@ -29,23 +30,74 @@ class FakeScalingPolicy(object):
 class FakeLaunchConfiguration(object):
     def __init__(self, name, image_id, key_name, security_groups, user_data,
                  instance_type, instance_monitoring, instance_profile_name,
-                 spot_price, ebs_optimized):
+                 spot_price, ebs_optimized, associate_public_ip_address, block_device_mapping_dict):
         self.name = name
         self.image_id = image_id
         self.key_name = key_name
-        self.security_groups = security_groups
+        self.security_groups = security_groups if security_groups else []
         self.user_data = user_data
         self.instance_type = instance_type
         self.instance_monitoring = instance_monitoring
         self.instance_profile_name = instance_profile_name
         self.spot_price = spot_price
         self.ebs_optimized = ebs_optimized
+        self.associate_public_ip_address = associate_public_ip_address
+        self.block_device_mapping_dict = block_device_mapping_dict
+
+    @classmethod
+    def create_from_cloudformation_json(cls, resource_name, cloudformation_json):
+        properties = cloudformation_json['Properties']
+
+        instance_profile_name = properties.get("IamInstanceProfile")
+
+        config = autoscaling_backend.create_launch_configuration(
+            name=resource_name,
+            image_id=properties.get("ImageId"),
+            key_name=properties.get("KeyName"),
+            security_groups=properties.get("SecurityGroups"),
+            user_data=properties.get("UserData"),
+            instance_type=properties.get("InstanceType"),
+            instance_monitoring=properties.get("InstanceMonitoring"),
+            instance_profile_name=instance_profile_name,
+            spot_price=properties.get("SpotPrice"),
+            ebs_optimized=properties.get("EbsOptimized"),
+            associate_public_ip_address=properties.get("AssociatePublicIpAddress"),
+            block_device_mappings=properties.get("BlockDeviceMapping.member")
+        )
+        return config
+
+    @property
+    def physical_resource_id(self):
+        return self.name
+
+    @property
+    def block_device_mappings(self):
+        if not self.block_device_mapping_dict:
+            return None
+        else:
+            return self._parse_block_device_mappings()
 
     @property
     def instance_monitoring_enabled(self):
         if self.instance_monitoring:
             return 'true'
         return 'false'
+
+    def _parse_block_device_mappings(self):
+        block_device_map = BlockDeviceMapping()
+        for mapping in self.block_device_mapping_dict:
+            block_type = BlockDeviceType()
+            mount_point = mapping.get('device_name')
+            if 'ephemeral' in mapping.get('virtual_name', ''):
+                block_type.ephemeral_name = mapping.get('virtual_name')
+            else:
+                block_type.volume_type = mapping.get('ebs._volume_type')
+                block_type.snapshot_id = mapping.get('ebs._snapshot_id')
+                block_type.delete_on_termination = mapping.get('ebs._delete_on_termination')
+                block_type.size = mapping.get('ebs._volume_size')
+                block_type.iops = mapping.get('ebs._iops')
+            block_device_map[mount_point] = block_type
+        return block_device_map
 
 
 class FakeAutoScalingGroup(object):
@@ -72,6 +124,34 @@ class FakeAutoScalingGroup(object):
         self.instances = []
         self.set_desired_capacity(desired_capacity)
 
+    @classmethod
+    def create_from_cloudformation_json(cls, resource_name, cloudformation_json):
+        properties = cloudformation_json['Properties']
+
+        launch_config_name = properties.get("LaunchConfigurationName")
+        load_balancer_names = properties.get("LoadBalancerNames", [])
+
+        group = autoscaling_backend.create_autoscaling_group(
+            name=resource_name,
+            availability_zones=properties.get("AvailabilityZones", []),
+            desired_capacity=properties.get("DesiredCapacity"),
+            max_size=properties.get("MaxSize"),
+            min_size=properties.get("MinSize"),
+            launch_config_name=launch_config_name,
+            vpc_zone_identifier=properties.get("VPCZoneIdentifier"),
+            default_cooldown=properties.get("Cooldown"),
+            health_check_period=properties.get("HealthCheckGracePeriod"),
+            health_check_type=properties.get("HealthCheckType"),
+            load_balancers=load_balancer_names,
+            placement_group=None,
+            termination_policies=properties.get("TerminationPolicies", []),
+        )
+        return group
+
+    @property
+    def physical_resource_id(self):
+        return self.name
+
     def update(self, availability_zones, desired_capacity, max_size, min_size,
                launch_config_name, vpc_zone_identifier, default_cooldown,
                health_check_period, health_check_type, load_balancers,
@@ -83,6 +163,8 @@ class FakeAutoScalingGroup(object):
         self.launch_config = autoscaling_backend.launch_configurations[launch_config_name]
         self.launch_config_name = launch_config_name
         self.vpc_zone_identifier = vpc_zone_identifier
+        self.health_check_period = health_check_period
+        self.health_check_type = health_check_type
 
         self.set_desired_capacity(desired_capacity)
 
@@ -103,7 +185,8 @@ class FakeAutoScalingGroup(object):
             reservation = ec2_backend.add_instances(
                 self.launch_config.image_id,
                 count_needed,
-                self.launch_config.user_data
+                self.launch_config.user_data,
+                self.launch_config.security_groups,
             )
             for instance in reservation.instances:
                 instance.autoscaling_group = self
@@ -127,7 +210,7 @@ class AutoScalingBackend(BaseBackend):
     def create_launch_configuration(self, name, image_id, key_name,
                                     security_groups, user_data, instance_type,
                                     instance_monitoring, instance_profile_name,
-                                    spot_price, ebs_optimized):
+                                    spot_price, ebs_optimized, associate_public_ip_address, block_device_mappings):
         launch_configuration = FakeLaunchConfiguration(
             name=name,
             image_id=image_id,
@@ -139,6 +222,8 @@ class AutoScalingBackend(BaseBackend):
             instance_profile_name=instance_profile_name,
             spot_price=spot_price,
             ebs_optimized=ebs_optimized,
+            associate_public_ip_address=associate_public_ip_address,
+            block_device_mapping_dict=block_device_mappings,
         )
         self.launch_configurations[name] = launch_configuration
         return launch_configuration
@@ -159,6 +244,15 @@ class AutoScalingBackend(BaseBackend):
                                  default_cooldown, health_check_period,
                                  health_check_type, load_balancers,
                                  placement_group, termination_policies):
+
+        def make_int(value):
+            return int(value) if value is not None else value
+
+        max_size = make_int(max_size)
+        min_size = make_int(min_size)
+        default_cooldown = make_int(default_cooldown)
+        health_check_period = make_int(health_check_period)
+
         group = FakeAutoScalingGroup(
             name=name,
             availability_zones=availability_zones,

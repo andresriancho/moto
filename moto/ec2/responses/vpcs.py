@@ -1,9 +1,10 @@
 from jinja2 import Template
 
+from moto.core.responses import BaseResponse
 from moto.ec2.models import ec2_backend
 
 
-class VPCs(object):
+class VPCs(BaseResponse):
     def create_vpc(self):
         cidr_block = self.querystring.get('CidrBlock')[0]
         vpc = ec2_backend.create_vpc(cidr_block)
@@ -34,7 +35,16 @@ CREATE_VPC_RESPONSE = """
       <cidrBlock>{{ vpc.cidr_block }}</cidrBlock>
       <dhcpOptionsId>dopt-1a2b3c4d2</dhcpOptionsId>
       <instanceTenancy>default</instanceTenancy>
-      <tagSet/>
+      <tagSet>
+        {% for tag in vpc.get_tags() %}
+          <item>
+            <resourceId>{{ tag.resource_id }}</resourceId>
+            <resourceType>{{ tag.resource_type }}</resourceType>
+            <key>{{ tag.key }}</key>
+            <value>{{ tag.value }}</value>
+          </item>
+        {% endfor %}
+      </tagSet>
    </vpc>
 </CreateVpcResponse>"""
 
@@ -49,7 +59,16 @@ DESCRIBE_VPCS_RESPONSE = """
         <cidrBlock>{{ vpc.cidr_block }}</cidrBlock>
         <dhcpOptionsId>dopt-7a8b9c2d</dhcpOptionsId>
         <instanceTenancy>default</instanceTenancy>
-        <tagSet/>
+        <tagSet>
+          {% for tag in vpc.get_tags() %}
+            <item>
+              <resourceId>{{ tag.resource_id }}</resourceId>
+              <resourceType>{{ tag.resource_type }}</resourceType>
+              <key>{{ tag.key }}</key>
+              <value>{{ tag.value }}</value>
+            </item>
+          {% endfor %}
+        </tagSet>
       </item>
     {% endfor %}
   </vpcSet>

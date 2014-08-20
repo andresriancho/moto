@@ -20,17 +20,20 @@ class DomainDispatcherApplication(object):
     value. We'll match the host header value with the url_bases of each backend.
     """
 
-    def __init__(self, create_app):
+    def __init__(self, create_app, service=None):
         self.create_app = create_app
         self.lock = Lock()
         self.app_instances = {}
+        self.service = service
 
     def get_backend_for_host(self, host):
-        for backend in BACKENDS.itervalues():
+        if self.service:
+            return self.service
+
+        for backend_name, backend in BACKENDS.iteritems():
             for url_base in backend.url_bases:
                 if re.match(url_base, 'http://%s' % host):
-                    print url_base, 'http://%s' % host
-                    return backend
+                    return backend_name
 
         raise RuntimeError('Invalid host: "%s"' % host)
 
@@ -56,7 +59,7 @@ class RegexConverter(BaseConverter):
         self.regex = items[0]
 
 
-def create_backend_app(backend):
+def create_backend_app(service):
     from werkzeug.routing import Map
 
     # Create the backend_app
@@ -67,6 +70,8 @@ def create_backend_app(backend):
     backend_app.view_functions = {}
     backend_app.url_map = Map()
     backend_app.url_map.converters['regex'] = RegexConverter
+
+    backend = BACKENDS[service]
     for url_path, handler in backend.flask_paths.iteritems():
         backend_app.route(url_path, methods=HTTP_METHODS)(convert_flask_to_httpretty_response(handler))
 
@@ -75,6 +80,13 @@ def create_backend_app(backend):
 
 def main(argv=sys.argv[1:]):
     parser = argparse.ArgumentParser()
+
+    # Keep this for backwards compat
+    parser.add_argument(
+        "service",
+        type=str,
+        nargs='?',  # http://stackoverflow.com/a/4480202/731592
+        default=None)
     parser.add_argument(
         '-H', '--host', type=str,
         help='Which host to bind',
@@ -87,10 +99,10 @@ def main(argv=sys.argv[1:]):
     args = parser.parse_args(argv)
 
     # Wrap the main application
-    main_app = DomainDispatcherApplication(create_backend_app)
+    main_app = DomainDispatcherApplication(create_backend_app, service=args.service)
     main_app.debug = True
 
-    run_simple(args.host, args.port, main_app)
+    run_simple(args.host, args.port, main_app, threaded=True)
 
 if __name__ == '__main__':
     main()
